@@ -1,3 +1,4 @@
+#include <sys/epoll.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/types.h>
@@ -5,24 +6,14 @@
 #include <string.h>
 #include "dbtime.h"
 #include "socketwrapper.h"
+#include "mytypes.h"
 
-#define	true		1
-#define false		0
+PackMsg msg;
+PackCmd cmd;
+PackAck ack;
 
-#define PORT 		3490
-#define MAX_DATASIZE 1024
-#define CMD_LENGTH 128
-
-struct Message
-{
-    int m_size;
-    char m_data[MAX_DATASIZE];
-} msg;
-
-struct Command
-{
-    char m_text[CMD_LENGTH];
-} cmd;
+int iret = 0, j=0;
+int moni[1000000];
 
 int main(int argc, char *argv[])
 {
@@ -55,6 +46,11 @@ int main(int argc, char *argv[])
 	
 	dbtime_endAndShow ();
 
+    for(j=0; j<iret; j++)
+    {
+        printf("%d\n", moni[j]);
+    }
+
 	Close(sockfd);
 	
 	dbtime_startTest ("Sleep 5s");
@@ -67,8 +63,9 @@ int main(int argc, char *argv[])
 
 int RecvFile(int fd, struct sockaddr_in remoteAddr, const char *filename)
 {
-	struct Message msg;
+    PackMsg msg;
     int addrlen;
+    int order;
 
     FILE *fp = fopen(filename, "wb");
     if(fp == 0)
@@ -77,10 +74,22 @@ int RecvFile(int fd, struct sockaddr_in remoteAddr, const char *filename)
         return false;
     }
 
+    order = 0;
     while(true)
     {
         Recvfrom(fd, &msg, sizeof(msg), 0, (struct sockaddr*)&remoteAddr, &addrlen);
+        ack.m_order = msg.m_order;
+        Sendto(fd, &ack, sizeof(ack), 0, (struct sockaddr*)&remoteAddr, sizeof(remoteAddr));
+
+        if(msg.m_order != order)
+        {
+            moni[iret++] = msg.m_order;
+            continue;
+        }
+
         fwrite(msg.m_data, 1, msg.m_size, fp);
+        order = order + 1;
+
         if(msg.m_size < MAX_DATASIZE)
         {
             break;

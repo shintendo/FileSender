@@ -28,5 +28,6 @@
 *.x86_64
 *.hex
 
-# Test File Images
+# Othor files
 *.img
+*.time

@@ -46,7 +46,7 @@
 #define  Sendto(a,b,c,d,e,f)     sendto(a,b,c,d,e,f)    
 #define  Sendmsg(a,b,c)          sendmsg(a,b,c)         
 #define  Close(a)                close(a) 
-/* æ ¼å¼è½¬æ¢ */
+/* ¸ñÊ½×ª»» */
 #define  Htons(a)				 htons(a)
 #define	 Inet_ntoa(a)			 inet_ntoa(a)
 
