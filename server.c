@@ -4,16 +4,24 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <string.h>
+#include <pthread.h>
+#include <semaphore.h>
 #include "socketwrapper.h"
 #include "mytypes.h"
 
-PackMsg msg;
+PackMsg msg[MSG_QUEUE_SIZE];
 PackCmd cmd;
 PackAck ack;
+FILE *fp;
+sem_t semEmpty, semFull;
 
 //for debug
 int iret = 0, j=0;
 int moni[1000000];
+
+int SendFile(int fd, struct sockaddr_in remoteAddr, const char *filename);
+int WaitAck(int epfd, int fd, int order, struct sockaddr_in remoteAddr);
+void* ThreadFileReader();
 
 int main()
 {
@@ -64,8 +72,10 @@ int SendFile(int fd, struct sockaddr_in remoteAddr, const char *filename)
     int order;
     int addrlen;
     int nfds;
+    int pos;
+    pthread_t pid;
 
-    FILE* fp = fopen(filename, "rb");
+    fp = fopen(filename, "rb");
     if(fp == 0)
     {
         perror("fopen");
@@ -80,31 +90,51 @@ int SendFile(int fd, struct sockaddr_in remoteAddr, const char *filename)
         return false;
     }
 
+
     ev.data.fd = fd;
     ev.events = EPOLLIN;
     epoll_ctl(epfd, EPOLL_CTL_ADD, fd, &ev);
 
+    sem_init(&semEmpty, 0, MSG_QUEUE_SIZE);
+    sem_init(&semFull, 0, 0);
+
+    if(pthread_create(&pid, NULL, ThreadFileReader, NULL) != 0)
+    {
+        perror("pthread_create");
+        fclose(fp);
+        return false;
+    }
+
     order = 0;
+    pos = 0;
     while(true)
     {
-        msg.m_size = fread(msg.m_data, 1, MAX_DATASIZE, fp);
-        msg.m_order = order;
-        Sendto(fd, &msg, sizeof(msg), 0, (struct sockaddr*)&remoteAddr, sizeof(remoteAddr));
+        sem_wait(&semFull);
+        msg[pos].m_order = order;
+        Sendto(fd, &msg[pos], sizeof(PackMsg), 0, (struct sockaddr*)&remoteAddr, sizeof(remoteAddr));
 
         while(WaitAck(epfd, fd, order, remoteAddr) == false)
         {
-            moni[iret++] = msg.m_order;
-            Sendto(fd, &msg, sizeof(msg), 0, (struct sockaddr*)&remoteAddr, sizeof(remoteAddr));
+            moni[iret++] = msg[pos].m_order;
+            Sendto(fd, &msg[pos], sizeof(PackMsg), 0, (struct sockaddr*)&remoteAddr, sizeof(remoteAddr));
         }
+
+        if(msg[pos].m_size < MAX_DATASIZE)
+        {
+            sem_post(&semEmpty);
+            break;
+        }
+        sem_post(&semEmpty);
         
         order = order + 1;
-
-        if(msg.m_size < MAX_DATASIZE)
+        pos = pos + 1;
+        if(pos == MSG_QUEUE_SIZE)
         {
-            break;
+            pos = 0;
         }
     }
 
+    pthread_join(pid, NULL);
     close(epfd);
     fclose(fp);
     return true;
@@ -130,18 +160,24 @@ int WaitAck(int epfd, int fd, int order, struct sockaddr_in remoteAddr)
     return false;
 }
 
+void* ThreadFileReader()
+{
+    int pos = 0;
+    while(true)
+    {
+        sem_wait(&semEmpty);
+        msg[pos].m_size = fread(msg[pos].m_data, 1, MAX_DATASIZE, fp);
+        sem_post(&semFull);
 
+        if(msg[pos].m_size < MAX_DATASIZE)
+        {
+            break;
+        }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
+        pos = pos + 1;
+        if(pos == MSG_QUEUE_SIZE)
+        {
+            pos = 0;
+        }
+    }
+}

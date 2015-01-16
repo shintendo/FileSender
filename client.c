@@ -96,7 +96,6 @@ int RecvFile(int fd, struct sockaddr_in remoteAddr, const char *filename)
 
         if(msg[pos].m_size < MAX_DATASIZE)
         {
-            pthread_join(pid, NULL);
             break;
         }
 
@@ -108,6 +107,7 @@ int RecvFile(int fd, struct sockaddr_in remoteAddr, const char *filename)
         }
     }
 
+    pthread_join(pid, NULL);
     fclose(fp);
     return true;
 }
