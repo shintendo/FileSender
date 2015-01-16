@@ -9,6 +9,7 @@
 #define CMD_LENGTH 128
 #define EPOLL_SIZE 1
 #define TIMEOUT 100
+#define MSG_QUEUE_SIZE 10000
 
 typedef struct
 {
