@@ -4,16 +4,13 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <string.h>
+#include <time.h>
 #include "socketwrapper.h"
 #include "mytypes.h"
 
 PackMsg msg;
 PackCmd cmd;
 PackAck ack;
-
-/* for debug */
-int iret = 0, j=0;
-int moni[1000000];
 
 int main(int argc, char *argv[])
 {
@@ -43,13 +40,7 @@ int main(int argc, char *argv[])
     if(RecvFile(sockfd, serverAddr, "file2.img") == true)
     {
         t_end = time(NULL);
-        printf("trans OK;\n time used: %.0fs\n", difftime(t_end, t_start));
-    }
-
-    printf("[debug info]pack missed:\n");    
-    for(j=0; j<iret; j++)
-    {
-        printf("%d\n", moni[j]);
+        printf("trans OK; time used: %.0fs\n", difftime(t_end, t_start));
     }
 
 	Close(sockfd);
@@ -58,7 +49,6 @@ int main(int argc, char *argv[])
 
 int RecvFile(int fd, struct sockaddr_in remoteAddr, const char *filename)
 {
-    PackMsg msg;
     int addrlen;
     int order;
 
@@ -78,7 +68,6 @@ int RecvFile(int fd, struct sockaddr_in remoteAddr, const char *filename)
 
         if(msg.m_order != order)
         {
-            moni[iret++] = msg.m_order;
             continue;
         }
 

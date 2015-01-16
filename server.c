@@ -9,7 +9,9 @@
 
 PackMsg msg;
 PackCmd cmd;
+PackAck ack;
 
+//for debug
 int iret = 0, j=0;
 int moni[1000000];
 
@@ -45,6 +47,7 @@ int main()
         printf("trans OK;\n");
     }
 
+    printf("[debug info]pack missed:\n");
     for(j=0; j<iret; j++)
     {
         printf("%d\n", moni[j]);
@@ -110,7 +113,6 @@ int SendFile(int fd, struct sockaddr_in remoteAddr, const char *filename)
 int WaitAck(int epfd, int fd, int order, struct sockaddr_in remoteAddr)
 {
     struct epoll_event events[EPOLL_SIZE];
-    PackAck ack;
     int addrlen;
 
     while(epoll_wait(epfd, events, EPOLL_SIZE, TIMEOUT) > 0)

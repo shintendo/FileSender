@@ -17,7 +17,7 @@ TARGETS	 =  $(SERVER_TARGET) $(CLIENT_TARGET)
 
 COMMON_OBJS = 
 SERVER_OBJS = server.o $(COMMON_OBJS)
-CLIENT_OBJS = dbtime.o client.o $(COMMON_OBJS)
+CLIENT_OBJS = client.o $(COMMON_OBJS)
 
 OBJS     =  $(COMMON_OBJS) $(SERVER_OBJS) $(CLIENT_OBJS) 
 
@@ -33,4 +33,4 @@ $(CLIENT_TARGET):$(CLIENT_OBJS)
 	$(CC) $(CC_FLAGS) $<
 
 clean:
-	$(RM) $(RM_FLAGS)  $(OBJS) $(TARGETS) *.bak dbtime.time
+	$(RM) $(RM_FLAGS)  $(OBJS) $(TARGETS) *.bak
