@@ -4,7 +4,6 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <string.h>
-#include "dbtime.h"
 #include "socketwrapper.h"
 #include "mytypes.h"
 
@@ -12,6 +11,7 @@ PackMsg msg;
 PackCmd cmd;
 PackAck ack;
 
+/* for debug */
 int iret = 0, j=0;
 int moni[1000000];
 
@@ -21,6 +21,7 @@ int main(int argc, char *argv[])
 	char *serverIP = "127.0.0.1";
 	struct sockaddr_in clientAddr;
     struct sockaddr_in serverAddr;
+    time_t t_start, t_end;
 	
 	if((sockfd=Socket(AF_INET,SOCK_DGRAM,0))==-1)
 	{
@@ -37,27 +38,21 @@ int main(int argc, char *argv[])
     Sendto(sockfd, &cmd, sizeof(cmd), 0, (struct sockaddr*)&serverAddr, sizeof(serverAddr));
     printf("start receiving...\n");
 
-	dbtime_startTest ("Connect & Recv");
+    t_start = time(NULL);
 
     if(RecvFile(sockfd, serverAddr, "file2.img") == true)
     {
-        printf("trans OK;\n");
+        t_end = time(NULL);
+        printf("trans OK;\n time used: %.0fs\n", difftime(t_end, t_start));
     }
-	
-	dbtime_endAndShow ();
 
+    printf("[debug info]pack missed:\n");    
     for(j=0; j<iret; j++)
     {
         printf("%d\n", moni[j]);
     }
 
 	Close(sockfd);
-	
-	dbtime_startTest ("Sleep 5s");
-    sleep(5);
-	dbtime_endAndShow ();
-	dbtime_finalize ();
-
 	return true;
 }
 
