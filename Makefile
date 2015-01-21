@@ -15,7 +15,7 @@ CLIENT_TARGET = client
 
 TARGETS	 =  $(SERVER_TARGET) $(CLIENT_TARGET)
 
-COMMON_OBJS = 
+COMMON_OBJS = udpHandler.o epollHandler.o
 SERVER_OBJS = server.o $(COMMON_OBJS)
 CLIENT_OBJS = client.o $(COMMON_OBJS)
 

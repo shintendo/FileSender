@@ -1,64 +1,49 @@
-#include <sys/epoll.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <sys/types.h>
-#include <sys/wait.h>
-#include <string.h>
-#include <time.h>
-#include <pthread.h>
-#include <semaphore.h>
-#include "socketwrapper.h"
-#include "mytypes.h"
+#include "fileSender.h"
+#include "udpHandler.h"
+#include "epollHandler.h"
 
-PackMsg msg[MSG_QUEUE_SIZE];
+PackMsg msg[MSGS_IN_BUF];
 PackCmd cmd;
 PackAck ack;
 FILE *fp;
 sem_t semEmpty, semFull;
 
-int RecvFile(int fd, struct sockaddr_in remoteAddr, const char *filename);
 void* ThreadFileWriter();
 
 int main(int argc, char *argv[])
 {
-    int sockfd;
-    char *serverIP = "127.0.0.1";
-    struct sockaddr_in clientAddr;
-    struct sockaddr_in serverAddr;
     time_t t_start, t_end;
-    
-    if((sockfd=Socket(AF_INET,SOCK_DGRAM,0))==-1)
+
+    if(UdpInit(CLIENT_UDP) == false)
     {
-        perror("socket");
         exit(1);
     }
     
-    memset(&serverAddr, 0, sizeof(serverAddr));
-    serverAddr.sin_family = AF_INET;
-    serverAddr.sin_port = Htons(PORT);
-    inet_aton(serverIP, &serverAddr.sin_addr);
-
     memset(&cmd, 0, sizeof(cmd));
-    Sendto(sockfd, &cmd, sizeof(cmd), 0, (struct sockaddr*)&serverAddr, sizeof(serverAddr));
-    printf("start receiving...\n");
+    printf("input file name:\n");
+    gets(cmd.m_text);
 
     t_start = time(NULL);
 
-    if(RecvFile(sockfd, serverAddr, "file2.img") == true)
+    UdpSend(&cmd, sizeof(cmd));
+    if(RecvFile("file2.img") == false)
     {
-        t_end = time(NULL);
-        printf("trans OK; time used: %.0fs\n", difftime(t_end, t_start));
+        perror("RecvFile");
+        UdpClose();
+        exit(1);
     }
 
-    Close(sockfd);
-    return true;
+    t_end = time(NULL);
+
+    printf("trans OK; time used: %.0fs\n", difftime(t_end, t_start));
+    UdpClose();
+    return 0;
 }
 
-int RecvFile(int fd, struct sockaddr_in remoteAddr, const char *filename)
+int RecvFile(const char *filename)
 {
-    int addrlen;
-    int order;
-    int pos;
+    int seq = 0;
+    int pos = 0;
     pthread_t pid;
 
     fp = fopen(filename, "wb");
@@ -68,7 +53,7 @@ int RecvFile(int fd, struct sockaddr_in remoteAddr, const char *filename)
         return false;
     }
 
-    sem_init(&semEmpty, 0, MSG_QUEUE_SIZE);
+    sem_init(&semEmpty, 0, MSGS_IN_BUF);
     sem_init(&semFull, 0, 0);
 
     if(pthread_create(&pid, NULL, ThreadFileWriter, NULL) != 0)
@@ -78,38 +63,35 @@ int RecvFile(int fd, struct sockaddr_in remoteAddr, const char *filename)
         return false;
     }
 
-    order = 0;
-    pos = 0;
     while(true)
     {
         sem_wait(&semEmpty);
-        Recvfrom(fd, &msg[pos], sizeof(PackMsg), 0, (struct sockaddr*)&remoteAddr, &addrlen);
-        ack.m_order = msg[pos].m_order;
-        Sendto(fd, &ack, sizeof(ack), 0, (struct sockaddr*)&remoteAddr, sizeof(remoteAddr));
-
-        if(msg[pos].m_order != order)
-        {
-            sem_post(&semEmpty);
-            continue;
-        }
+        RecvMsg(seq++, &msg[pos]);
         sem_post(&semFull);
 
-        if(msg[pos].m_size < MAX_DATASIZE)
+        if(msg[pos].m_size < BYTES_IN_MSG)
         {
             break;
         }
 
-        order = order + 1;
-        pos = pos + 1;
-        if(pos == MSG_QUEUE_SIZE)
-        {
-            pos = 0;
-        }
+        pos = (pos + 1) % MSGS_IN_BUF;
     }
 
     pthread_join(pid, NULL);
     fclose(fp);
     return true;
+}
+
+int RecvMsg(int seq, PackMsg *p_msg)
+{
+    do
+    {
+        UdpRecv(p_msg, sizeof(PackMsg));
+        ack.m_seq = p_msg->m_seq;
+        UdpSend(&ack, sizeof(PackAck));
+    } while(p_msg->m_seq != seq);
+
+    return p_msg->m_size;
 }
 
 void* ThreadFileWriter()
@@ -121,18 +103,11 @@ void* ThreadFileWriter()
         fwrite(msg[pos].m_data, 1, msg[pos].m_size, fp);
         sem_post(&semEmpty);
 
-        if(msg[pos].m_size < MAX_DATASIZE)
+        if(msg[pos].m_size < BYTES_IN_MSG)
         {
             break;
         }
 
-        pos = pos + 1;
-        if(pos == MSG_QUEUE_SIZE)
-        {
-            pos = 0;
-        }
+        pos = (pos + 1) % MSGS_IN_BUF;
     }
 }
-
-
-

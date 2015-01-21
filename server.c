@@ -1,78 +1,38 @@
-#include <sys/epoll.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <sys/types.h>
-#include <sys/wait.h>
-#include <string.h>
-#include <pthread.h>
-#include <semaphore.h>
-#include "socketwrapper.h"
-#include "mytypes.h"
+#include "fileSender.h"
+#include "udpHandler.h"
+#include "epollHandler.h"
 
-PackMsg msg[MSG_QUEUE_SIZE];
+PackMsg msg[MSGS_IN_BUF];
 PackCmd cmd;
 PackAck ack;
 FILE *fp;
 sem_t semEmpty, semFull;
 
-//for debug
-int iret = 0, j=0;
-int moni[1000000];
-
-int SendFile(int fd, struct sockaddr_in remoteAddr, const char *filename);
-int WaitAck(int epfd, int fd, int order, struct sockaddr_in remoteAddr);
 void* ThreadFileReader();
 
 int main()
 {
-    int sockfd;
-    int addrlen;
-    struct sockaddr_in serverAddr;
-    struct sockaddr_in clientAddr;
-    
-    if((sockfd = Socket(AF_INET, SOCK_DGRAM, 0)) == -1)
+    if(UdpInit(SERVER_UDP) == false)
     {
-        perror("socket");
         exit(1);
     }
-    
-    memset(&serverAddr, 0, sizeof(serverAddr));
-    serverAddr.sin_family = AF_INET;
-    serverAddr.sin_port = Htons(PORT);
-    serverAddr.sin_addr.s_addr = INADDR_ANY;
 
-    if(Bind(sockfd, (struct sockaddr *)&serverAddr, sizeof(serverAddr)) == -1) 
+    UdpRecv(&cmd, sizeof(cmd));
+    if(SendFile(cmd.m_text) == false)
     {
-        perror("bind");
-        exit(1);
-    }
-    
-    Recvfrom(sockfd, &cmd, sizeof(cmd), 0, (struct sockaddr*)&clientAddr, &addrlen);
-    printf("start sending...\n");
-
-    if(SendFile(sockfd, clientAddr, "file.img") == true)
-    {
-        printf("trans OK;\n");
+        perror("SendFile");
+        UdpClose();
     }
 
-    printf("[debug info]pack missed:\n");
-    for(j=0; j<iret; j++)
-    {
-        printf("%d\n", moni[j]);
-    }
-
-    Close(sockfd);
+    printf("trans OK;\n");
+    UdpClose();
     return true;
 }
 
-int SendFile(int fd, struct sockaddr_in remoteAddr, const char *filename)
+int SendFile(const char *filename)
 {
-    struct epoll_event ev;
-    int epfd;
-    int order;
-    int addrlen;
-    int nfds;
-    int pos;
+    int seq = 0;
+    int pos = 0;
     pthread_t pid;
 
     fp = fopen(filename, "rb");
@@ -82,20 +42,14 @@ int SendFile(int fd, struct sockaddr_in remoteAddr, const char *filename)
         return false;
     }
 
-    epfd = epoll_create(EPOLL_SIZE);
-    if(epfd == -1)
+    if(EpollInit(UdpSockfd()) == false)
     {
-        perror("epoll_create");
+        perror("EpollInit");
         fclose(fp);
         return false;
     }
 
-
-    ev.data.fd = fd;
-    ev.events = EPOLLIN;
-    epoll_ctl(epfd, EPOLL_CTL_ADD, fd, &ev);
-
-    sem_init(&semEmpty, 0, MSG_QUEUE_SIZE);
+    sem_init(&semEmpty, 0, MSGS_IN_BUF);
     sem_init(&semFull, 0, 0);
 
     if(pthread_create(&pid, NULL, ThreadFileReader, NULL) != 0)
@@ -105,58 +59,46 @@ int SendFile(int fd, struct sockaddr_in remoteAddr, const char *filename)
         return false;
     }
 
-    order = 0;
-    pos = 0;
     while(true)
     {
         sem_wait(&semFull);
-        msg[pos].m_order = order;
-        Sendto(fd, &msg[pos], sizeof(PackMsg), 0, (struct sockaddr*)&remoteAddr, sizeof(remoteAddr));
+        SendMsg(seq++, &msg[pos]);
 
-        while(WaitAck(epfd, fd, order, remoteAddr) == false)
-        {
-            moni[iret++] = msg[pos].m_order;
-            Sendto(fd, &msg[pos], sizeof(PackMsg), 0, (struct sockaddr*)&remoteAddr, sizeof(remoteAddr));
-        }
-
-        if(msg[pos].m_size < MAX_DATASIZE)
+        if(msg[pos].m_size < BYTES_IN_MSG)
         {
             sem_post(&semEmpty);
             break;
         }
         sem_post(&semEmpty);
         
-        order = order + 1;
-        pos = pos + 1;
-        if(pos == MSG_QUEUE_SIZE)
-        {
-            pos = 0;
-        }
+        pos = (pos + 1) % MSGS_IN_BUF;
     }
 
     pthread_join(pid, NULL);
-    close(epfd);
-    fclose(fp);
     return true;
 }
 
-int WaitAck(int epfd, int fd, int order, struct sockaddr_in remoteAddr)
+int SendMsg(int seq, PackMsg *p_msg)
 {
-    struct epoll_event events[EPOLL_SIZE];
-    int addrlen;
-
-    while(epoll_wait(epfd, events, EPOLL_SIZE, TIMEOUT) > 0)
+    p_msg->m_seq = seq;
+    do
     {
-        if(events[0].events & EPOLLIN)
+        UdpSend(p_msg, sizeof(PackMsg));
+    } while(WaitAck(seq) == false);
+
+    return p_msg->m_size;
+}
+
+int WaitAck(int seq)
+{
+    while(EpollWait(TIMEOUT) == true)
+    {
+        UdpRecv(&ack, sizeof(PackAck));
+        if(ack.m_seq == seq)
         {
-            Recvfrom(fd, &ack, sizeof(ack), 0, (struct sockaddr*)&remoteAddr, &addrlen);
-            if(ack.m_order == order)
-            {
-                return true;
-            }
+            return true;
         }
     }
-
     return false;
 }
 
@@ -166,18 +108,14 @@ void* ThreadFileReader()
     while(true)
     {
         sem_wait(&semEmpty);
-        msg[pos].m_size = fread(msg[pos].m_data, 1, MAX_DATASIZE, fp);
+        msg[pos].m_size = fread(msg[pos].m_data, 1, BYTES_IN_MSG, fp);
         sem_post(&semFull);
 
-        if(msg[pos].m_size < MAX_DATASIZE)
+        if(msg[pos].m_size < BYTES_IN_MSG)
         {
             break;
         }
 
-        pos = pos + 1;
-        if(pos == MSG_QUEUE_SIZE)
-        {
-            pos = 0;
-        }
+        pos = (pos + 1) % MSGS_IN_BUF;
     }
 }
