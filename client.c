@@ -1,113 +1,74 @@
-#include "fileSender.h"
-#include "udpHandler.h"
-#include "epollHandler.h"
+#include "TcpHandler.h"
+#include "FileHandler.h"
+#include "Main.h"
 
-PackMsg msg[MSGS_IN_BUF];
-PackCmd cmd;
-PackAck ack;
-FILE *fp;
+Block buf[BLOCKS_IN_BUF];
 sem_t semEmpty, semFull;
 
-void* ThreadFileWriter();
-
-int main(int argc, char *argv[])
+int main()
 {
+    char filename[REQ_LENGTH];
     time_t t_start, t_end;
 
-    if(UdpInit(CLIENT_UDP) == false)
+    if(BuildConnect(CLIENT) == false)
     {
-        exit(1);
+        return -1;
     }
-    
-    memset(&cmd, 0, sizeof(cmd));
-    printf("input file name:\n");
-    gets(cmd.m_text);
+    printf("Input File Name:\n");
+    gets(filename);
 
     t_start = time(NULL);
-
-    UdpSend(&cmd, sizeof(cmd));
-    if(RecvFile("file2.img") == false)
+    SendReq(filename);
+    if(RecvFile("new.file") == false)
     {
-        perror("RecvFile");
-        UdpClose();
-        exit(1);
+        CloseConnect(CLIENT);
+        return -1;
     }
-
     t_end = time(NULL);
 
     printf("trans OK; time used: %.0fs\n", difftime(t_end, t_start));
-    UdpClose();
+    CloseConnect(CLIENT);
     return 0;
 }
 
-int RecvFile(const char *filename)
+int RecvFile(char *filename)
 {
-    int seq = 0;
     int pos = 0;
+    int nBytes;
     pthread_t pid;
 
-    fp = fopen(filename, "wb");
-    if(fp == 0)
+    if(OpenFile(filename, WRITE) == false)
     {
-        perror("fopen");
         return false;
     }
-
-    sem_init(&semEmpty, 0, MSGS_IN_BUF);
+    sem_init(&semEmpty, 0, BLOCKS_IN_BUF);
     sem_init(&semFull, 0, 0);
+    pthread_create(&pid, NULL, ThreadFileWriter, NULL);
 
-    if(pthread_create(&pid, NULL, ThreadFileWriter, NULL) != 0)
-    {
-        perror("pthread_create");
-        fclose(fp);
-        return false;
-    }
-
-    while(true)
-    {
-        sem_wait(&semEmpty);
-        RecvMsg(seq++, &msg[pos]);
-        sem_post(&semFull);
-
-        if(msg[pos].m_size < BYTES_IN_MSG)
-        {
-            break;
-        }
-
-        pos = (pos + 1) % MSGS_IN_BUF;
-    }
-
-    pthread_join(pid, NULL);
-    fclose(fp);
-    return true;
-}
-
-int RecvMsg(int seq, PackMsg *p_msg)
-{
     do
     {
-        UdpRecv(p_msg, sizeof(PackMsg));
-        ack.m_seq = p_msg->m_seq;
-        UdpSend(&ack, sizeof(PackAck));
-    } while(p_msg->m_seq != seq);
+        sem_wait(&semEmpty);
+        nBytes = RecvBlock(&buf[pos]);
+        sem_post(&semFull);
+        pos = (pos + 1) % BLOCKS_IN_BUF;
 
-    return p_msg->m_size;
+    } while(nBytes == BYTES_IN_BLOCK);
+
+    pthread_join(pid, NULL);
+    CloseFile();
+    return true;
 }
 
 void* ThreadFileWriter()
 {
     int pos = 0;
-    while(true)
+    int nBytes;
+    do
     {
         sem_wait(&semFull);
-        fwrite(msg[pos].m_data, 1, msg[pos].m_size, fp);
+        nBytes = WriteBlock(&buf[pos]);
         sem_post(&semEmpty);
+        pos = (pos + 1) % BLOCKS_IN_BUF;
 
-        if(msg[pos].m_size < BYTES_IN_MSG)
-        {
-            break;
-        }
-
-        pos = (pos + 1) % MSGS_IN_BUF;
-    }
+    } while(nBytes == BYTES_IN_BLOCK);
 }
